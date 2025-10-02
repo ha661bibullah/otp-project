@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <title>OTP Demo</title>
   <style>
-    body{font-family:Arial,Helvetica,sans-serif;padding:20px;max-width:600px}
-    input{padding:8px;margin:6px 0}
-    button{padding:8px 12px}
+    body{font-family:Arial,Helvetica,sans-serif;padding:20px;max-width:640px}
+    input{padding:8px;margin:6px 0;width:100%}
+    button{padding:8px 12px;margin-top:6px}
     pre{background:#f4f4f4;padding:10px}
   </style>
 </head>
@@ -15,14 +15,14 @@
 
   <section>
     <h3>Send OTP</h3>
-    <input id="email" type="email" placeholder="Enter email" style="width:100%" />
+    <input id="email" type="email" placeholder="Enter email" />
     <button id="sendBtn">Send OTP</button>
     <p id="sendMsg"></p>
   </section>
 
   <section>
     <h3>Verify OTP</h3>
-    <input id="otp" type="text" placeholder="Enter OTP" style="width:100%" />
+    <input id="otp" type="text" placeholder="Enter OTP" />
     <button id="verifyBtn">Verify OTP</button>
     <p id="verifyMsg"></p>
   </section>
@@ -30,8 +30,9 @@
   <pre id="debug"></pre>
 
   <script>
-    // Set API to localhost for local testing, or to your Render URL when deployed
-    const API = "https://otp-project-kng9.onrender.com"; // <<-- change to deployed backend URL when live
+    // DEFAULT for local dev. After deploying backend to Render, replace with your Render URL.
+    // Example: const API = "https://otp-backend.onrender.com";
+    const API = "http://localhost:5000";
 
     const el = id => document.getElementById(id);
     el('sendBtn').addEventListener('click', async () => {
