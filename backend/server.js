@@ -1,4 +1,4 @@
-// backend/server.js
+// server.js
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -9,32 +9,29 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors()); // For prod restrict origin: app.use(cors({ origin: 'https://your-frontend.netlify.app' }))
-app.use(bodyParser.json());
-
-// Config
-const EMAIL_PROVIDER = (process.env.EMAIL_PROVIDER || 'gmail').toLowerCase();
-const RETURN_OTP_IN_RESPONSE = (process.env.RETURN_OTP_IN_RESPONSE || 'true').toLowerCase() === 'true';
+const EMAIL_PROVIDER = (process.env.EMAIL_PROVIDER || 'brevo').toLowerCase();
+const RETURN_OTP_IN_RESPONSE = (process.env.RETURN_OTP_IN_RESPONSE || 'false').toLowerCase() === 'true';
 const OTP_EXPIRY_SECONDS = parseInt(process.env.OTP_EXPIRY_SECONDS || '300', 10);
 
-// In-memory OTP store (email -> { otp, expiresAt, timeoutId })
-// NOTE: For production use Redis or DB for persistence across instances.
-const otpStore = new Map();
+// CORS: restrict to FRONTEND_URL in prod
+const FRONTEND_URL = process.env.FRONTEND_URL || '*';
+app.use(cors({ origin: FRONTEND_URL }));
+app.use(bodyParser.json());
 
+// In-memory OTP store (email -> { otp, expiresAt, timeoutId })
+const otpStore = new Map();
 function generateOTP() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 function setOtp(email, otp) {
-  const existing = otpStore.get(email);
-  if (existing && existing.timeoutId) clearTimeout(existing.timeoutId);
+  const prev = otpStore.get(email);
+  if (prev && prev.timeoutId) clearTimeout(prev.timeoutId);
   const expiresAt = Date.now() + OTP_EXPIRY_SECONDS * 1000;
   const timeoutId = setTimeout(() => otpStore.delete(email), OTP_EXPIRY_SECONDS * 1000);
   otpStore.set(email, { otp, expiresAt, timeoutId });
 }
 
-// --- Transport / API helpers ---
-
-// Nodemailer transporter for Gmail (used only when EMAIL_PROVIDER === 'gmail')
+// --- Gmail transporter (used only if EMAIL_PROVIDER === 'gmail') ---
 let transporter = null;
 if (EMAIL_PROVIDER === 'gmail') {
   transporter = nodemailer.createTransport({
@@ -50,27 +47,24 @@ if (EMAIL_PROVIDER === 'gmail') {
   });
 
   transporter.verify((err, success) => {
-    if (err) console.error('❌ SMTP verify failed:', err && err.message ? err.message : err);
+    if (err) console.error('❌ Gmail SMTP verify failed:', err && err.message ? err.message : err);
     else console.log('✅ Gmail SMTP ready to send mails');
   });
 } else {
-  console.log('ℹ️ Email provider is not Gmail; expecting Brevo API for sending.');
+  console.log('ℹ️ Email provider set to Brevo (HTTP API).');
 }
 
-// Brevo send via HTTP (used when EMAIL_PROVIDER === 'brevo')
-// Expects BREVO_API_KEY env var
+// --- Brevo helper (HTTP API) ---
 async function sendViaBrevo(toEmail, subject, htmlContent, textContent) {
   const apiKey = process.env.BREVO_API_KEY;
   if (!apiKey) throw new Error('BREVO_API_KEY not set');
-
   const payload = {
-    sender: { name: process.env.SENDER_NAME || 'NoReply', email: process.env.SENDER_EMAIL || (process.env.EMAIL_USER || '') },
+    sender: { name: process.env.SENDER_NAME || 'NoReply', email: process.env.SENDER_EMAIL || '' },
     to: [{ email: toEmail }],
     subject,
-    htmlContent: htmlContent || textContent || `<p>${textContent}</p>`,
-    textContent: textContent || htmlContent || ''
+    htmlContent: htmlContent || `<p>${textContent}</p>`,
+    textContent: textContent || ''
   };
-
   const res = await axios.post('https://api.brevo.com/v3/smtp/email', payload, {
     headers: { 'api-key': apiKey, 'Content-Type': 'application/json' },
     timeout: 10000
@@ -80,7 +74,7 @@ async function sendViaBrevo(toEmail, subject, htmlContent, textContent) {
 
 // --- Routes ---
 
-// Debug route: list current OTPs (for local dev only) — remove in production
+// Debug (local only) -> remove in strict prod
 app.get('/__debug/otps', (req, res) => {
   const out = {};
   otpStore.forEach((v, k) => {
@@ -89,7 +83,6 @@ app.get('/__debug/otps', (req, res) => {
   res.json(out);
 });
 
-// Send OTP
 app.post('/send-otp', async (req, res) => {
   try {
     let { email } = req.body;
@@ -100,10 +93,9 @@ app.post('/send-otp', async (req, res) => {
     setOtp(email, otp);
 
     const subject = 'Your OTP Code';
-    const text = `Your OTP is: ${otp}\nThis code will expire in ${Math.floor(OTP_EXPIRY_SECONDS/60)} minute(s).`;
+    const text = `Your OTP is: ${otp}\nValid for ${Math.floor(OTP_EXPIRY_SECONDS/60)} minute(s).`;
 
     if (EMAIL_PROVIDER === 'gmail') {
-      // Use Nodemailer / Gmail SMTP
       if (!transporter) throw new Error('SMTP transporter not initialized');
       const mailOptions = {
         from: process.env.EMAIL_USER,
@@ -111,7 +103,6 @@ app.post('/send-otp', async (req, res) => {
         subject,
         text
       };
-
       transporter.sendMail(mailOptions, (err, info) => {
         if (err) {
           console.error('❌ sendMail error:', err);
@@ -122,9 +113,7 @@ app.post('/send-otp', async (req, res) => {
         if (RETURN_OTP_IN_RESPONSE) resp.otp = otp;
         return res.json(resp);
       });
-
     } else if (EMAIL_PROVIDER === 'brevo') {
-      // Use Brevo API
       try {
         await sendViaBrevo(email, subject, `<p>${text}</p>`, text);
         console.log(`✅ OTP sent via Brevo to ${email}`);
@@ -144,7 +133,6 @@ app.post('/send-otp', async (req, res) => {
   }
 });
 
-// Verify OTP
 app.post('/verify-otp', (req, res) => {
   try {
     let { email, otp } = req.body;
@@ -171,7 +159,6 @@ app.post('/verify-otp', (req, res) => {
   }
 });
 
-// Start
 app.listen(PORT, () => {
   console.log(`🚀 OTP backend running on port ${PORT} — provider=${EMAIL_PROVIDER}`);
 });
